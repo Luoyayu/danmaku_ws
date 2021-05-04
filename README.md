@@ -1,0 +1,1 @@
+`danmaku -rid 1234567 [-async] [-debug] [-filter] [-regexp='(.*)【(.*)】|(.*)【(.*)']`
