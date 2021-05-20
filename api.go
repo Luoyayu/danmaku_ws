@@ -30,6 +30,26 @@ func RoomInit(roomID interface{}) (room *Room, err error) {
 	return room, errors.Wrap(err, "room_init")
 }
 
+type PlayUrl struct {
+	Code    int    `json:"code"`
+	Msg     string `json:"msg"`
+	Message string `json:"message"`
+	Data    *struct {
+		DUrl []struct {
+			Url string
+		} `json:"durl"`
+	} `json:"data"`
+}
+
+func GetPlayUrl(longRoomID interface{}, quality string) (playUrl *PlayUrl, err error) {
+	var ret interface{}
+	if ret, err = GetDefault("https://api.live.bilibili.com/room/v1/Room/playUrl",
+		map[string]interface{}{"cid": longRoomID, "quality": quality, "platform": "h5"}, &PlayUrl{}); err == nil {
+		playUrl = ret.(*PlayUrl)
+	}
+	return playUrl, errors.Wrap(err, "playUrl")
+}
+
 func GetDefault(url_ string, params map[string]interface{}, in interface{}) (out interface{}, err error) {
 	out = in
 	l := url.Values{}

@@ -18,6 +18,8 @@ import (
 
 var FilterRegexp *regexp.Regexp
 
+var SuperChats = map[string]bool{}
+
 func init() {
 	FilterRegexp, _ = regexp.Compile(`(.*)【(.*)】|(.*)【(.*)`)
 }
@@ -32,6 +34,7 @@ type Client struct {
 	Ack  chan bool
 
 	Debug        bool
+	Delay        float64
 	Sync         bool
 	Filter       bool
 	FilterRegexp string
@@ -57,7 +60,7 @@ func (c *Client) Init(context ctx.Context) error {
 	}
 
 	if room, err := RoomInit(c.Id); err == nil {
-		if room.Data.LiveStatus == 0 {
+		if room.Data.LiveStatus != 1 {
 			fmt.Println("🚧 Not on the air 🚧")
 		}
 		c.Id = room.Data.RoomId
@@ -69,16 +72,23 @@ func (c *Client) Init(context ctx.Context) error {
 			return err
 		}
 
+		defer c.Conn.Close()
+		sendHeartBeatContext, sendHeartBeatCancel := ctx.WithCancel(context)
+		recvMsgContext, recvMsgCancel := ctx.WithCancel(context)
+
 		go c.sendAuth()
-		go c.recvMsg(context)
+		go c.recvMsg(recvMsgContext)
 
 		if <-c.Ack == true {
 			fmt.Printf("Conn has benn estimated to danmaku server in room %v\n", c.Id)
-			go c.sendHeartBeat(context)
+			go c.sendHeartBeat(sendHeartBeatContext)
 		}
 
 		select {
 		case <-context.Done():
+			c.Log("danmaku client receive cancel()")
+			sendHeartBeatCancel()
+			recvMsgCancel()
 			return nil
 		}
 	} else {
@@ -107,15 +117,21 @@ func (c *Client) sendAuth() {
 
 func (c *Client) sendHeartBeat(context ctx.Context) {
 	for {
+		timeoutChan := make(chan struct{})
+
+		go func() {
+			<-time.After(time.Second * 30)
+			timeoutChan <- struct{}{}
+		}()
+
 		select {
 		case <-context.Done():
 			c.Log("[INFO] Stop send heart beat package.")
 			return
-		default:
+		case <-timeoutChan:
 			buf := make([]byte, 16)
 			hex.Decode(buf, []byte("0000001f001000010000000200000001"))
 			c.Conn.WriteMessage(ws.BinaryMessage, buf)
-			time.Sleep(30 * time.Second)
 		}
 	}
 }
@@ -145,8 +161,9 @@ func (c *Client) recvMsg(context ctx.Context) {
 			c.Log("[INFO] Stop receive danmaku.")
 			return
 		default:
-			_, msg, _ := c.Conn.ReadMessage()
-			c.handleMsg(msg)
+			if _, msg, _ := c.Conn.ReadMessage(); len(msg) > 16 {
+				c.handleMsg(msg)
+			}
 		}
 	}
 }
@@ -199,7 +216,8 @@ func (c *Client) handleOpsNotify(msgContent []byte) {
 
 		// always highlight filter
 		if filterDanmaku(danmaku) != nil {
-			color.New(color.FgBlue).Printf("‍🌐 %s（%s）\n", danmaku, posterName)
+			color.New(color.FgBlue).Printf("%s", danmaku)
+			fmt.Printf(" （%s）\n", posterName)
 		} else if !c.Filter {
 			fmt.Printf("%s（%s）\n", danmaku, posterName)
 		}
@@ -211,7 +229,12 @@ func (c *Client) handleOpsNotify(msgContent []byte) {
 		) // HACK ME!
 
 		if !c.Filter {
-			color.New(color.FgRed).Printf("%s（%s）\n", danmaku, posterName)
+			if SuperChats[danmaku+posterName] == true {
+				delete(SuperChats, danmaku)
+			} else {
+				color.New(color.FgRed).Printf("%s（%s）\n", danmaku, posterName)
+				SuperChats[danmaku+posterName] = true
+			}
 		}
 	}
 }
